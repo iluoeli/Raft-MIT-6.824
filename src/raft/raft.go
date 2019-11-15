@@ -167,27 +167,32 @@ func (rf *Raft) sState() string {
 
 // Switch to other state
 func (rf *Raft) switchTo(s ServerState) {
-	DPrintf("%s: Switching to %s", rf.sState(), s.String())
-
 	if s != rf.serverState {
+		DPrintf("%s: Switching to %s", rf.sState(), s.String())
+
 		switch s {
 		case FOLLOWER:
 			rf.votedFor = -1
 			rf.heartbeatTimer.Stop()
 			rf.resetElectionTimer()
+			rf.serverState = s
 		case CANDIDATE:
-			rf.votedFor = -1
+			rf.votedFor = rf.me
 			rf.resetElectionTimer()
+			rf.serverState = s
 		case LEADER:
 			// do something
 			rf.electionTimer.Stop()
 			rf.resetHeartbeatTimer()
-			if rf.serverState != CANDIDATE {
+			if rf.serverState == CANDIDATE {
+				rf.serverState = s
+			} else {
 				DPrintf("%s: illegal switching from %s to %s",
 					rf.sState(), rf.serverState.String(), s.String())
 			}
 		}
-		rf.serverState = s
+	} else {
+		DPrintf("%s: meaningless switch %s", rf.sState(), s.String())
 	}
 }
 
@@ -249,6 +254,7 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 			// update self
 			rf.votedFor = args.CandidateId
 			rf.switchTo(FOLLOWER)
+			rf.resetElectionTimer()
 			//rf.voteCh <- struct{}{}
 		}
 	}
@@ -337,12 +343,11 @@ func (rf *Raft) resetHeartbeatTimer()  {
 }
 
 func (rf *Raft) electionHandler() {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	//rf.mu.Lock()
+	//defer rf.mu.Unlock()
 	defer rf.persist()
 
 	// vote for self
-	// FIXME: change term here is dangerous
 	//rf.currentTerm += 1
 	rf.votedFor = rf.me
 	nPeers := len(rf.peers)
@@ -361,16 +366,17 @@ func (rf *Raft) electionHandler() {
 		} else {
 			go func(voter int) {
 				var reply RequestVoteReply
-				if rf.sendRequestVote(voter, args, &reply) {
+				if rf.serverState == CANDIDATE && rf.sendRequestVote(voter, args, &reply) {
 					if reply.VoteGranted {
 						// successful voting
 						//DPrintf("%s: Successful voting from %d", rf.sState(), voter)
 
 						atomic.AddInt32(&votes, 1)
 						// check your votes already gained
-						if int(votes) > nPeers / 2 {
+						if int(votes) > nPeers / 2 && rf.serverState != LEADER {
 							rf.mu.Lock()
 							rf.switchTo(LEADER)
+							rf.broadcastEntryHandler()	// NOTE: send heartbeat right now once becoming a leader
 							rf.mu.Unlock()
 						}
 					} else if reply.Term > rf.currentTerm {
@@ -381,7 +387,7 @@ func (rf *Raft) electionHandler() {
 						rf.switchTo(FOLLOWER)
 						rf.mu.Unlock()
 					} else {
-						DPrintf("%s: My voting is rejected by %d", rf.sState(), voter)
+						DPrintf("%s: can NOT connect to %d when voting", rf.sState(), voter)
 					}
 				}
 			}(i)
@@ -391,8 +397,8 @@ func (rf *Raft) electionHandler() {
 
 // Leader broadcasts the new entry or send heartbeat
 func (rf *Raft) broadcastEntryHandler() {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	//rf.mu.Lock()
+	//defer rf.mu.Unlock()
 	defer rf.persist()
 
 	for i := range rf.peers {
@@ -442,9 +448,10 @@ func (rf *Raft) eventLoop()  {
 						rf.mu.Lock()
 						rf.currentTerm += 1
 						rf.switchTo(CANDIDATE)
+						rf.resetElectionTimer()
+						rf.electionHandler()
 						rf.mu.Unlock()
-						go rf.electionHandler()
-					default:
+				default:
 						//DPrintf("%s", rf.sState())
 				}
 			case CANDIDATE:
@@ -455,11 +462,10 @@ func (rf *Raft) eventLoop()  {
 
 						rf.mu.Lock()
 						rf.currentTerm += 1
-						rf.mu.Unlock()
 						rf.resetElectionTimer()
-						go rf.electionHandler()
+						rf.electionHandler()
+						rf.mu.Unlock()
 					default:
-						// check votes
 						//DPrintf("%s", rf.sState())
 				}
 			case LEADER:
@@ -467,8 +473,11 @@ func (rf *Raft) eventLoop()  {
 				select {
 					case <-rf.heartbeatTimer.C:
 						DPrintf("%s: broadcast heartbeat", rf.sState())
+
+						rf.mu.Lock()
 						rf.resetHeartbeatTimer()
-						go rf.broadcastEntryHandler()
+						rf.broadcastEntryHandler()
+						rf.mu.Unlock()
 					default:
 						//DPrintf("%s", rf.sState())
 				}
