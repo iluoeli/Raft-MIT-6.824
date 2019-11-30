@@ -6,7 +6,6 @@
       <change beforePath="$PROJECT_DIR$/src/raft/raft.go" beforeDir="false" afterPath="$PROJECT_DIR$/src/raft/raft.go" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/raft/test_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/src/raft/test_test.go" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/raft/util.go" beforeDir="false" afterPath="$PROJECT_DIR$/src/raft/util.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/test.sh" beforeDir="false" afterPath="$PROJECT_DIR$/test.sh" afterDir="false" />
     </list>
     <option name="EXCLUDED_CONVERTED_TO_IGNORED" value="true" />
     <option name="SHOW_DIALOG" value="false" />
@@ -71,7 +70,9 @@
       <updated>1573653357915</updated>
       <workItem from="1573653359657" duration="1073000" />
       <workItem from="1573705050237" duration="17823000" />
-      <workItem from="1573781245973" duration="38823000" />
+      <workItem from="1573781245973" duration="40044000" />
+      <workItem from="1573976821145" duration="4476000" />
+      <workItem from="1575096171807" duration="312000" />
     </task>
     <servers />
   </component>

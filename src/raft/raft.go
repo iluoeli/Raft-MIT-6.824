@@ -69,8 +69,8 @@ func (s ServerState) String() string {
 
 // Definition of time interval (ms): election, heartbeat
 const (
-	ElecTimeoutLB     int64 = 150
-	ElecTimeoutUB     int64 = 300
+	ElecTimeoutLB     int64 = 300
+	ElecTimeoutUB     int64 = 450
 	HeartbeatDuration time.Duration = 100 * time.Millisecond
 )
 
@@ -452,7 +452,6 @@ func (rf *Raft) eventLoop()  {
 						rf.electionHandler()
 						rf.mu.Unlock()
 				default:
-						//DPrintf("%s", rf.sState())
 				}
 			case CANDIDATE:
 				select {
@@ -466,7 +465,6 @@ func (rf *Raft) eventLoop()  {
 						rf.electionHandler()
 						rf.mu.Unlock()
 					default:
-						//DPrintf("%s", rf.sState())
 				}
 			case LEADER:
 				// send heartbeat periodically
@@ -479,7 +477,6 @@ func (rf *Raft) eventLoop()  {
 						rf.broadcastEntryHandler()
 						rf.mu.Unlock()
 					default:
-						//DPrintf("%s", rf.sState())
 				}
 			}
 	}
