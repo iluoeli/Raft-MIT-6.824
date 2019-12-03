@@ -255,8 +255,12 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 
 			rf.currentTerm = args.Term
 			rf.votedFor = -1
+			// 这里不加以处理，可能出现死锁
+			if rf.serverState == LEADER {
+				rf.heartbeatTimer.Stop()
+				rf.resetElectionTimer()
+			}
 			rf.serverState = FOLLOWER
-			rf.heartbeatTimer.Stop()
 			rf.persist()
 			// NOTE: do not reset election timer (case c)
 		}
@@ -441,16 +445,16 @@ func (rf *Raft) resetElectionTimer()  {
 	//	<-rf.electionTimer.C
 	//}
 	rf.electionDuration = time.Duration(ElecTimeoutLB + rand.Int63n(ElecTimeoutUB - ElecTimeoutLB)) * time.Millisecond
-	rf.electionTimer.Reset(rf.electionDuration)
-	DPrintf("%s [RESET]: election timer", rf.toString())
+	active := rf.electionTimer.Reset(rf.electionDuration)
+	DPrintf("%s [RESET]: election timer (%t)", rf.toString(), active)
 }
 
 func (rf *Raft) resetHeartbeatTimer()  {
 	//if !rf.heartbeatTimer.Stop() {
 	//	<-rf.heartbeatTimer.C
 	//}
-	rf.heartbeatTimer.Reset(rf.heartbeatDuration)
-	DPrintf("%s [RESET]: heartbeat timer", rf.toString())
+	active := rf.heartbeatTimer.Reset(rf.heartbeatDuration)
+	DPrintf("%s [RESET]: heartbeat timer (%t)", rf.toString(), active)
 }
 
 func (rf *Raft) electionHandler() {
@@ -472,6 +476,7 @@ func (rf *Raft) electionHandler() {
 		if i == rf.me {	// Surely I vote for myself
 			atomic.AddInt32(&votes, 1)
 		} else {
+			DPrintf("%s [POLL]: to %d, %v", rf.toString(), i, args)
 			go func(voter int) {
 				var reply RequestVoteReply
 				if rf.serverState == CANDIDATE && rf.sendRequestVote(voter, args, &reply) {
@@ -645,12 +650,18 @@ func (rf *Raft) eventLoop()  {
 					case <-rf.electionTimer.C:
 						// switch to candidate
 						DPrintf("%s [EventLoop]: Start voting because of election timeout", rf.toString())
+						// 如果在这个时候阻塞，被拉票，然后更新term，它的term就会是最新的，重新选举出新的leader（波动）
 
 						rf.mu.Lock()
-						rf.currentTerm += 1
-						rf.switchTo(CANDIDATE)
-						rf.persist()
-						rf.electionHandler()
+						if rf.serverState != FOLLOWER {
+							rf.resetElectionTimer()
+						} else {
+							rf.currentTerm += 1
+							rf.switchTo(CANDIDATE)
+							rf.persist()
+							rf.resetElectionTimer()
+							rf.electionHandler()
+						}
 						rf.mu.Unlock()
 					default:
 				}
@@ -663,10 +674,14 @@ func (rf *Raft) eventLoop()  {
 						DPrintf("%s [EventLoop]: Restart voting because of election timeout", rf.toString())
 
 						rf.mu.Lock()
-						rf.currentTerm += 1
-						rf.persist()
-						rf.resetElectionTimer()
-						rf.electionHandler()
+						if rf.serverState != CANDIDATE {
+							rf.resetElectionTimer()
+						} else {
+							rf.currentTerm += 1
+							rf.persist()
+							rf.resetElectionTimer()
+							rf.electionHandler()
+						}
 						rf.mu.Unlock()
 					default:
 				}
@@ -679,8 +694,12 @@ func (rf *Raft) eventLoop()  {
 						DPrintf("%s [EventLoop]: Broadcast heartbeat", rf.toString())
 
 						rf.mu.Lock()
-						rf.resetHeartbeatTimer()
-						rf.broadcastEntryHandler()
+						if rf.serverState != LEADER {
+							rf.resetHeartbeatTimer()
+						} else {
+							rf.resetHeartbeatTimer()
+							rf.broadcastEntryHandler()
+						}
 						rf.mu.Unlock()
 					default:
 				}
