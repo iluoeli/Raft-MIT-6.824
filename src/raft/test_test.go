@@ -139,8 +139,11 @@ func TestFailNoAgree(t *testing.T) {
 
 	cfg.one(10, servers)
 
+	fmt.Printf("Passed check one\n\n\n")
+
 	// 3 of 5 followers disconnect
 	leader := cfg.checkOneLeader()
+	fmt.Printf("DISCONNECT %d, %d, %d\n\n\n", (leader + 1) % servers, (leader + 2) % servers, (leader + 3) % servers)
 	cfg.disconnect((leader + 1) % servers)
 	cfg.disconnect((leader + 2) % servers)
 	cfg.disconnect((leader + 3) % servers)
@@ -161,6 +164,7 @@ func TestFailNoAgree(t *testing.T) {
 	}
 
 	// repair failures
+	fmt.Printf("RE-CONNECT %d, %d, %d\n\n\n", (leader + 1) % servers, (leader + 2) % servers, (leader + 3) % servers)
 	cfg.connect((leader + 1) % servers)
 	cfg.connect((leader + 2) % servers)
 	cfg.connect((leader + 3) % servers)
@@ -296,6 +300,8 @@ func TestRejoin(t *testing.T) {
 	leader1 := cfg.checkOneLeader()
 	cfg.disconnect(leader1)
 
+	fmt.Printf("\n\n\nDISCONNECT Leader1 %d\n\n\n", leader1)
+
 	// make old leader try to agree on some entries
 	cfg.rafts[leader1].Start(102)
 	cfg.rafts[leader1].Start(103)
@@ -308,13 +314,19 @@ func TestRejoin(t *testing.T) {
 	leader2 := cfg.checkOneLeader()
 	cfg.disconnect(leader2)
 
+	fmt.Printf("\n\n\nDISCONNECT Leader2 %d\n\n\n", leader2)
+
 	// old leader connected again
 	cfg.connect(leader1)
+
+	fmt.Printf("\n\n\nRE-CONNECT Leader1 %d\n\n\n", leader1)
 
 	cfg.one(104, 2)
 
 	// all together now
 	cfg.connect(leader2)
+
+	fmt.Printf("\n\n\nRE-CONNECT Leader2 %d\n\n\n", leader2)
 
 	cfg.one(105, servers)
 
@@ -330,8 +342,13 @@ func TestBackup(t *testing.T) {
 
 	cfg.one(rand.Int(), servers)
 
+
 	// put leader and one follower in a partition
 	leader1 := cfg.checkOneLeader()
+
+	fmt.Printf("\n\n\nDISCONNECT %d, %d, %d\n\n\n",
+		(leader1 + 2) % servers, (leader1 + 3) % servers, (leader1 + 4) % servers)
+
 	cfg.disconnect((leader1 + 2) % servers)
 	cfg.disconnect((leader1 + 3) % servers)
 	cfg.disconnect((leader1 + 4) % servers)
@@ -346,10 +363,16 @@ func TestBackup(t *testing.T) {
 	cfg.disconnect((leader1 + 0) % servers)
 	cfg.disconnect((leader1 + 1) % servers)
 
+	fmt.Printf("\n\n\nDISCONNECT %d, %d\n\n\n",
+		(leader1 + 0) % servers, (leader1 + 1) % servers)
+
 	// allow other partition to recover
 	cfg.connect((leader1 + 2) % servers)
 	cfg.connect((leader1 + 3) % servers)
 	cfg.connect((leader1 + 4) % servers)
+
+	fmt.Printf("\n\n\nRE-CONNECT %d, %d, %d\n\n\n",
+		(leader1 + 2) % servers, (leader1 + 3) % servers, (leader1 + 4) % servers)
 
 	// lots of successful commands to new group.
 	for i := 0; i < 50; i++ {
@@ -363,6 +386,8 @@ func TestBackup(t *testing.T) {
 		other = (leader2 + 1) % servers
 	}
 	cfg.disconnect(other)
+
+	fmt.Printf("\n\n\nDISCONNECT other %d\n\n\n", other)
 
 	// lots more commands that won't commit
 	for i := 0; i < 50; i++ {
@@ -379,6 +404,8 @@ func TestBackup(t *testing.T) {
 	cfg.connect((leader1 + 1) % servers)
 	cfg.connect(other)
 
+	fmt.Printf("\n\n\nRE-CONNECT leader1 %d, %d, %d\n\n\n", leader1, (leader1 + 1) % servers, other)
+
 	// lots of successful commands to new group.
 	for i := 0; i < 50; i++ {
 		cfg.one(rand.Int(), 3)
@@ -388,6 +415,9 @@ func TestBackup(t *testing.T) {
 	for i := 0; i < servers; i++ {
 		cfg.connect(i)
 	}
+
+	fmt.Printf("\n\n\nRE-CONNECT everyone!\n\n\n")
+
 	cfg.one(rand.Int(), servers)
 
 	fmt.Printf("  ... Passed\n")
@@ -566,6 +596,8 @@ func TestPersist2(t *testing.T) {
 		cfg.disconnect((leader1 + 1) % servers)
 		cfg.disconnect((leader1 + 2) % servers)
 
+		fmt.Printf("\n\n\nDISCONNECT %d, %d\n\n\n", (leader1 + 1) % servers, (leader1 + 2) % servers)
+
 		cfg.one(10+index, servers-2)
 		index++
 
@@ -573,21 +605,29 @@ func TestPersist2(t *testing.T) {
 		cfg.disconnect((leader1 + 3) % servers)
 		cfg.disconnect((leader1 + 4) % servers)
 
+		fmt.Printf("\n\n\nDISCONNECT %d, %d, %d\n\n\n", leader1, (leader1 + 3) % servers, (leader1 + 4) % servers)
+
 		cfg.start1((leader1 + 1) % servers)
 		cfg.start1((leader1 + 2) % servers)
 		cfg.connect((leader1 + 1) % servers)
 		cfg.connect((leader1 + 2) % servers)
+
+		fmt.Printf("\n\n\nRE-CONNECT %d, %d\n\n\n", (leader1 + 1) % servers, (leader1 + 2) % servers)
 
 		time.Sleep(RaftElectionTimeout)
 
 		cfg.start1((leader1 + 3) % servers)
 		cfg.connect((leader1 + 3) % servers)
 
+		fmt.Printf("\n\n\nRE-CONNECT %d\n\n\n", (leader1 + 3) % servers)
+
 		cfg.one(10+index, servers-2)
 		index++
 
 		cfg.connect((leader1 + 4) % servers)
 		cfg.connect((leader1 + 0) % servers)
+
+		fmt.Printf("\n\n\nRE-CONNECT %d, %d\n\n\n", (leader1 + 4) % servers, (leader1 + 0) % servers)
 	}
 
 	cfg.one(1000, servers)

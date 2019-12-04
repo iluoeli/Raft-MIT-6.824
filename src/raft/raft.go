@@ -382,20 +382,8 @@ func (rf *Raft) AppendEntries(args AppendEntryArgs, reply *AppendEntryReply) {
 		// Apply load
 		reply.Success = true
 
-		//newLogIdx := args.PrevLogIndex
+		// Deleting existing entries only when inconsistency happened, otherwise, just append.
 		if args.Entries != nil {
-			//for _, entry := range args.Entries {
-			//	newLogIdx += 1
-			//	if newLogIdx != entry.Index {
-			//		DPrintf("%s [ERROR]: log index not equal (%d != %d)", newLogIdx, entry.Index)
-			//	}
-			//	if newLogIdx <= lastLogIndex {
-			//		rf.log[newLogIdx] = entry
-			//	} else {
-			//		break
-			//	}
-			//}
-
 			rf.log = append(rf.log[0:args.PrevLogIndex+1], args.Entries...)
 			rf.persist()
 		}
