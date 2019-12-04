@@ -1,4 +1,4 @@
-T=1
+T=10
 N=0
 
 export GOPATH=$PWD
