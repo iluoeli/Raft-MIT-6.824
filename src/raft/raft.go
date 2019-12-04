@@ -114,6 +114,8 @@ type Raft struct {
 
 	commitCh			chan struct{}
 	stateChangeCh		chan struct{}
+	shutdownCh			chan struct{}	// shutdown eventLoop
+	shutdownCmtCh		chan struct{}	// shutdown committer
 }
 
 // return currentTerm and whether this server
@@ -592,31 +594,34 @@ func (rf *Raft) committer() {
 
 	for {
 		select {
-			case <-rf.commitCh:
-				rf.mu.Lock()
-				DPrintf("%s [CMT]: Committing index from %d to %d",
-					rf.toString(), rf.lastApplied+1, rf.commitIndex)
+		case <-rf.shutdownCmtCh:
+			DPrintf("%s [CMT]: shutdown committer", rf.toString())
+			return
+		case <-rf.commitCh:
+			rf.mu.Lock()
+			DPrintf("%s [CMT]: Committing index from %d to %d",
+				rf.toString(), rf.lastApplied+1, rf.commitIndex)
 
-				entries := rf.log[rf.lastApplied+1:rf.commitIndex+1]
-				rf.mu.Unlock()
+			entries := rf.log[rf.lastApplied+1:rf.commitIndex+1]
+			rf.mu.Unlock()
 
-				go func(entries []LogEntry) {
-					for _, entry := range entries {
-						applyMsg := ApplyMsg{
-							Index:       entry.Index,
-							Command:     entry.Command,
-							UseSnapshot: false,
-							Snapshot:    nil,
-						}
-						rf.mu.Lock()
-						rf.applyCh <- applyMsg
-						if rf.lastApplied < entry.Index {
-							rf.lastApplied = entry.Index
-						}
-						DPrintf("%s [CMT]: Committed command %d at %d", rf.toString(), entry.Command, entry.Index)
-						rf.mu.Unlock()
+			go func(entries []LogEntry) {
+				for _, entry := range entries {
+					applyMsg := ApplyMsg{
+						Index:       entry.Index,
+						Command:     entry.Command,
+						UseSnapshot: false,
+						Snapshot:    nil,
 					}
-				}(entries)
+					rf.mu.Lock()
+					rf.applyCh <- applyMsg
+					if rf.lastApplied < entry.Index {
+						rf.lastApplied = entry.Index
+					}
+					DPrintf("%s [CMT]: Committed command %d at %d", rf.toString(), entry.Command, entry.Index)
+					rf.mu.Unlock()
+				}
+			}(entries)
 
 		}
 	}
@@ -631,65 +636,74 @@ func (rf *Raft) eventLoop()  {
 		switch rf.serverState {
 			case FOLLOWER:
 				select {
-					case <-rf.stateChangeCh:
-						DPrintf("%s [EventLoop]: state change", rf.toString())
-					case <-rf.voteCh:
-						rf.resetElectionTimer()
-					case <-rf.electionTimer.C:
-						// switch to candidate
-						DPrintf("%s [EventLoop]: Start voting because of election timeout", rf.toString())
-						// 如果在这个时候阻塞，被拉票，然后更新term，它的term就会是最新的，重新选举出新的leader（波动）
+				case <-rf.shutdownCh:
+					DPrintf("%s [EventLoop]: exit eventLoop", rf.toString())
+					return
+				case <-rf.stateChangeCh:
+					DPrintf("%s [EventLoop]: state change", rf.toString())
+				case <-rf.voteCh:
+					rf.resetElectionTimer()
+				case <-rf.electionTimer.C:
+					// switch to candidate
+					DPrintf("%s [EventLoop]: Start voting because of election timeout", rf.toString())
+					// 如果在这个时候阻塞，被拉票，然后更新term，它的term就会是最新的，重新选举出新的leader（波动）
 
-						rf.mu.Lock()
-						if rf.serverState != FOLLOWER {
-							rf.resetElectionTimer()
-						} else {
-							rf.currentTerm += 1
-							rf.switchTo(CANDIDATE)
-							rf.persist()
-							rf.resetElectionTimer()
-							rf.electionHandler()
-						}
-						rf.mu.Unlock()
-					default:
+					rf.mu.Lock()
+					if rf.serverState != FOLLOWER {
+						rf.resetElectionTimer()
+					} else {
+						rf.currentTerm += 1
+						rf.switchTo(CANDIDATE)
+						rf.persist()
+						rf.resetElectionTimer()
+						rf.electionHandler()
+					}
+					rf.mu.Unlock()
+				default:
 				}
 			case CANDIDATE:
 				select {
-					case <-rf.stateChangeCh:
-						DPrintf("%s [EventLoop]: state change", rf.toString())
-					case <-rf.electionTimer.C: // election timeout
-						// resetElectionTimer & restart election
-						DPrintf("%s [EventLoop]: Restart voting because of election timeout", rf.toString())
+				case <-rf.shutdownCh:
+					DPrintf("%s [EventLoop]: exit eventLoop", rf.toString())
+					return
+				case <-rf.stateChangeCh:
+					DPrintf("%s [EventLoop]: state change", rf.toString())
+				case <-rf.electionTimer.C: // election timeout
+					// resetElectionTimer & restart election
+					DPrintf("%s [EventLoop]: Restart voting because of election timeout", rf.toString())
 
-						rf.mu.Lock()
-						if rf.serverState != CANDIDATE {
-							rf.resetElectionTimer()
-						} else {
-							rf.currentTerm += 1
-							rf.persist()
-							rf.resetElectionTimer()
-							rf.electionHandler()
-						}
-						rf.mu.Unlock()
-					default:
+					rf.mu.Lock()
+					if rf.serverState != CANDIDATE {
+						rf.resetElectionTimer()
+					} else {
+						rf.currentTerm += 1
+						rf.persist()
+						rf.resetElectionTimer()
+						rf.electionHandler()
+					}
+					rf.mu.Unlock()
+				default:
 				}
 			case LEADER:
 				select {
-					case <-rf.stateChangeCh:
-						DPrintf("%s [EventLoop]: state change", rf.toString())
-					case <-rf.heartbeatTimer.C:
-						// send heartbeat periodically
-						DPrintf("%s [EventLoop]: Broadcast heartbeat", rf.toString())
+				case <-rf.shutdownCh:
+					DPrintf("%s [EventLoop]: exit eventLoop", rf.toString())
+					return
+				case <-rf.stateChangeCh:
+					DPrintf("%s [EventLoop]: state change", rf.toString())
+				case <-rf.heartbeatTimer.C:
+					// send heartbeat periodically
+					DPrintf("%s [EventLoop]: Broadcast heartbeat", rf.toString())
 
-						rf.mu.Lock()
-						if rf.serverState != LEADER {
-							rf.resetHeartbeatTimer()
-						} else {
-							rf.resetHeartbeatTimer()
-							rf.broadcastEntryHandler()
-						}
-						rf.mu.Unlock()
-					default:
+					rf.mu.Lock()
+					if rf.serverState != LEADER {
+						rf.resetHeartbeatTimer()
+					} else {
+						rf.resetHeartbeatTimer()
+						rf.broadcastEntryHandler()
+					}
+					rf.mu.Unlock()
+				default:
 				}
 			}
 	}
@@ -744,6 +758,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 //
 func (rf *Raft) Kill() {
 	// Your code here, if desired.
+	DPrintf("%s [STOP]: I am killed", rf.toString())
+	rf.shutdownCh <- struct{}{}
+	rf.shutdownCmtCh <- struct{}{}
 }
 
 //
@@ -775,6 +792,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.applyCh = applyCh
 	rf.commitCh = make(chan struct{}, 10)	// in case of dead-lock
 	rf.stateChangeCh = make(chan struct{})
+	rf.shutdownCh = make(chan struct{})
+	rf.shutdownCmtCh = make(chan struct{})
 
 	rf.electionDuration = time.Duration(ElecTimeoutLB + rand.Int63n(ElecTimeoutUB - ElecTimeoutLB)) * time.Millisecond
 	rf.electionTimer = time.NewTimer(rf.electionDuration)
