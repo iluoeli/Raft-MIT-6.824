@@ -257,14 +257,13 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 
 			rf.currentTerm = args.Term
 			rf.votedFor = -1
-			// 这里不加以处理，可能出现死锁
 			if rf.serverState == LEADER {
 				rf.heartbeatTimer.Stop()
 				rf.resetElectionTimer()
 			}
 			rf.serverState = FOLLOWER
 			rf.persist()
-			// NOTE: do not reset election timer (case c)
+			rf.stateChangeCh <- struct{}{}
 		}
 
 		// 1) If the logs have last entries with different terms, then
@@ -287,6 +286,7 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 			rf.switchTo(FOLLOWER)
 			rf.votedFor = args.CandidateId
 			rf.persist()
+			rf.stateChangeCh <- struct{}{}
 			//rf.resetElectionTimer()
 			//rf.voteCh <- struct{}{}
 		} else {
@@ -370,6 +370,7 @@ func (rf *Raft) AppendEntries(args AppendEntryArgs, reply *AppendEntryReply) {
 	reply.Term = args.Term
 	rf.switchTo(FOLLOWER)
 	rf.persist()
+	rf.stateChangeCh <- struct{}{}
 	//rf.resetElectionTimer()
 
 	// Check log index & term
@@ -486,6 +487,7 @@ func (rf *Raft) electionHandler() {
 						if int(votes) > nPeers / 2 && rf.serverState == CANDIDATE {
 							rf.switchTo(LEADER)
 							rf.persist()
+							rf.stateChangeCh <- struct{}{}
 							rf.broadcastEntryHandler()	// NOTE: send heartbeat right now once becoming a leader
 						}
 					} else if reply.Term > rf.currentTerm {
@@ -495,6 +497,7 @@ func (rf *Raft) electionHandler() {
 						rf.currentTerm = reply.Term
 						rf.switchTo(FOLLOWER)
 						rf.persist()
+						rf.stateChangeCh <- struct{}{}
 					} else {
 						DPrintf("%s [POLL]: %d did NOT vote for me", rf.toString(), voter)
 					}
@@ -574,6 +577,7 @@ func (rf *Raft) broadcastEntryHandler() {
 						rf.currentTerm = reply.Term
 						rf.switchTo(FOLLOWER)
 						rf.persist()
+						rf.stateChangeCh <- struct{}{}
 					} else if args.Term == rf.currentTerm {
 						// Failed because of inconsistent prevLog
 						DPrintf("%s [HB]: Decrement nextIndex[%d] (%d -> %d)",
@@ -631,8 +635,6 @@ func (rf *Raft) committer() {
 func (rf *Raft) eventLoop()  {
 	DPrintf("%s: Enter eventLoop", rf.toString())
 	for {
-		// TODO: atomic serverState
-		// FIXME: busy waiting
 		switch rf.serverState {
 			case FOLLOWER:
 				select {
@@ -659,7 +661,6 @@ func (rf *Raft) eventLoop()  {
 						rf.electionHandler()
 					}
 					rf.mu.Unlock()
-				default:
 				}
 			case CANDIDATE:
 				select {
@@ -682,7 +683,6 @@ func (rf *Raft) eventLoop()  {
 						rf.electionHandler()
 					}
 					rf.mu.Unlock()
-				default:
 				}
 			case LEADER:
 				select {
@@ -703,7 +703,6 @@ func (rf *Raft) eventLoop()  {
 						rf.broadcastEntryHandler()
 					}
 					rf.mu.Unlock()
-				default:
 				}
 			}
 	}
@@ -743,8 +742,8 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		rf.matchIndex[rf.me] = index
 		DPrintf("%s: new command %d in %d", rf.toString(), command, index)
 
-		rf.resetHeartbeatTimer()
-		rf.broadcastEntryHandler()
+		//rf.resetHeartbeatTimer()
+		//rf.broadcastEntryHandler()
 	}
 
 	return index, term, isLeader
