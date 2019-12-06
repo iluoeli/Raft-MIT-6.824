@@ -71,7 +71,7 @@ func (s ServerState) String() string {
 const (
 	ElecTimeoutLB     int64 = 200
 	ElecTimeoutUB     int64 = 400
-	HeartbeatDuration time.Duration = 100 * time.Millisecond
+	HeartbeatDuration		= 100 * time.Millisecond
 )
 
 //
@@ -102,11 +102,9 @@ type Raft struct {
 
 	// Server state
 	serverState	ServerState
-	votes		int	// the number of votes server got
 
 	// channel & timer
 	applyCh 			chan ApplyMsg
-	voteCh				chan struct{}
 	electionDuration	time.Duration
 	electionTimer		*time.Timer
 	heartbeatDuration	time.Duration
@@ -164,7 +162,7 @@ func (rf *Raft) readPersist(data []byte) {
 	d.Decode(&rf.log)
 }
 
-// Get server state with string type: [me@term, serverState]
+// Get server state with string type: [term	id-serverState]
 func (rf *Raft) toString() string {
 	return fmt.Sprintf("%d\t%d-%s", rf.currentTerm, rf.me, rf.serverState.String())
 }
@@ -180,12 +178,10 @@ func (rf *Raft) switchTo(s ServerState) {
 			rf.heartbeatTimer.Stop()
 			rf.resetElectionTimer()
 			rf.serverState = s
-			//rf.stateChangeCh <- struct{}{}
 		case CANDIDATE:
 			rf.votedFor = rf.me
 			rf.resetElectionTimer()
 			rf.serverState = s
-			//rf.stateChangeCh <- struct{}{}
 		case LEADER:
 			if rf.serverState == CANDIDATE {
 				rf.serverState = s
@@ -196,14 +192,11 @@ func (rf *Raft) switchTo(s ServerState) {
 				for i := range rf.nextIndex {
 					rf.nextIndex[i] = nLogs
 				}
-				//rf.stateChangeCh <- struct{}{}
 			} else {
 				DPrintf("%s: illegal switching from %s to %s",
 					rf.toString(), rf.serverState.String(), s.String())
 			}
 		}
-	} else {
-		DPrintf("%s: meaningless switch %s", rf.toString(), s.String())
 	}
 }
 
@@ -251,8 +244,6 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 		return
 	} else {
 		if args.Term > rf.currentTerm {
-			// vote for stronger unconditionally. NO. election restriction
-			//DPrintf("%s: Vote for %d unconditionally", rf.toString(), args.CandidateId)
 			DPrintf("%s [RV]: Update term (%d -> %d)", rf.toString(), rf.currentTerm, args.Term)
 
 			rf.currentTerm = args.Term
@@ -287,8 +278,6 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 			rf.votedFor = args.CandidateId
 			rf.persist()
 			rf.stateChangeCh <- struct{}{}
-			//rf.resetElectionTimer()
-			//rf.voteCh <- struct{}{}
 		} else {
 			DPrintf("%s [RV]: Reject vote from Candidate %d, VoteFor %d, lastLogTerm(%d, %d), lastLogIndex(%d, %d)",
 				rf.toString(), args.CandidateId, rf.votedFor, args.LastLogTerm, lastLogTerm, args.LastLogIndex, lastLogIndex)
@@ -371,9 +360,8 @@ func (rf *Raft) AppendEntries(args AppendEntryArgs, reply *AppendEntryReply) {
 	rf.switchTo(FOLLOWER)
 	rf.persist()
 	rf.stateChangeCh <- struct{}{}
-	//rf.resetElectionTimer()
 
-	// Check log index & term
+	// Check last log index & last log term
 	lastLogIndex := len(rf.log) - 1
 	if args.PrevLogIndex > lastLogIndex {
 		// Leader should decrement nextIndex
@@ -403,12 +391,12 @@ func (rf *Raft) AppendEntries(args AppendEntryArgs, reply *AppendEntryReply) {
 			}
 		}
 
-		DPrintf("%s [AE]: Apply log loads (%d)", rf.toString(), len(rf.log))
+		DPrintf("%s [AE]: Apply log entries, current length %d", rf.toString(), len(rf.log))
 
+		// TODO
 		if rf.commitIndex > rf.lastApplied {
 			rf.commitCh <- struct {}{}
 		}
-
 	} else if args.PrevLogIndex <= lastLogIndex && args.PrevLogTerm != rf.log[args.PrevLogIndex].Term {
 		// Find the last matching index
 		DPrintf("%s [AE]: Terms not equal: (%d != %d)", rf.toString(), args.PrevLogTerm, rf.log[args.PrevLogIndex].Term)
@@ -424,7 +412,7 @@ func (rf *Raft) AppendEntries(args AppendEntryArgs, reply *AppendEntryReply) {
 			}
 		}
 	} else { // This should NOT happen
-		DPrintf("%s [AE]: ERROR, AE arges is [%s]", rf.toString(), args.toString())
+		DPrintf("%s [AE]: ERROR, AE args is [%s]", rf.toString(), args.toString())
 
 		reply.Success = false
 		reply.NextIndex = 1
@@ -432,25 +420,18 @@ func (rf *Raft) AppendEntries(args AppendEntryArgs, reply *AppendEntryReply) {
 }
 
 func (rf *Raft) resetElectionTimer()  {
-	//if !rf.electionTimer.Stop() {
-	//	<-rf.electionTimer.C
-	//}
 	rf.electionDuration = time.Duration(ElecTimeoutLB + rand.Int63n(ElecTimeoutUB - ElecTimeoutLB)) * time.Millisecond
 	active := rf.electionTimer.Reset(rf.electionDuration)
 	DPrintf("%s [RESET]: election timer (%t)", rf.toString(), active)
 }
 
 func (rf *Raft) resetHeartbeatTimer()  {
-	//if !rf.heartbeatTimer.Stop() {
-	//	<-rf.heartbeatTimer.C
-	//}
 	active := rf.heartbeatTimer.Reset(rf.heartbeatDuration)
 	DPrintf("%s [RESET]: heartbeat timer (%t)", rf.toString(), active)
 }
 
 func (rf *Raft) electionHandler() {
 	// vote for self
-	//rf.currentTerm += 1
 	rf.votedFor = rf.me
 	rf.persist()
 	nPeers := len(rf.peers)
@@ -510,7 +491,8 @@ func (rf *Raft) electionHandler() {
 	}
 }
 
-// Leader broadcasts the new entry or send heartbeat
+// Leader broadcasts the new entries or just sends heartbeat.
+// NOTE: Lock() before invoking this method.
 func (rf *Raft) broadcastEntryHandler() {
 	for i := range rf.peers {
 		if i != rf.me {
@@ -636,75 +618,71 @@ func (rf *Raft) eventLoop()  {
 	DPrintf("%s: Enter eventLoop", rf.toString())
 	for {
 		switch rf.serverState {
-			case FOLLOWER:
-				select {
-				case <-rf.shutdownCh:
-					DPrintf("%s [EventLoop]: exit eventLoop", rf.toString())
-					return
-				case <-rf.stateChangeCh:
-					DPrintf("%s [EventLoop]: state change", rf.toString())
-				case <-rf.voteCh:
+		case FOLLOWER:
+			select {
+			case <-rf.shutdownCh:
+				DPrintf("%s [EventLoop]: quit eventLoop", rf.toString())
+				return
+			case <-rf.stateChangeCh:
+				DPrintf("%s [EventLoop]: state change", rf.toString())
+			case <-rf.electionTimer.C:
+				// switch to candidate
+				DPrintf("%s [EventLoop]: Start voting because of election timeout", rf.toString())
+				rf.mu.Lock()
+				if rf.serverState != FOLLOWER {
 					rf.resetElectionTimer()
-				case <-rf.electionTimer.C:
-					// switch to candidate
-					DPrintf("%s [EventLoop]: Start voting because of election timeout", rf.toString())
-					// 如果在这个时候阻塞，被拉票，然后更新term，它的term就会是最新的，重新选举出新的leader（波动）
-
-					rf.mu.Lock()
-					if rf.serverState != FOLLOWER {
-						rf.resetElectionTimer()
-					} else {
-						rf.currentTerm += 1
-						rf.switchTo(CANDIDATE)
-						rf.persist()
-						rf.resetElectionTimer()
-						rf.electionHandler()
-					}
-					rf.mu.Unlock()
+				} else {
+					rf.currentTerm += 1
+					rf.switchTo(CANDIDATE)
+					rf.persist()
+					rf.resetElectionTimer()
+					rf.electionHandler()
 				}
-			case CANDIDATE:
-				select {
-				case <-rf.shutdownCh:
-					DPrintf("%s [EventLoop]: exit eventLoop", rf.toString())
-					return
-				case <-rf.stateChangeCh:
-					DPrintf("%s [EventLoop]: state change", rf.toString())
-				case <-rf.electionTimer.C: // election timeout
-					// resetElectionTimer & restart election
-					DPrintf("%s [EventLoop]: Restart voting because of election timeout", rf.toString())
-
-					rf.mu.Lock()
-					if rf.serverState != CANDIDATE {
-						rf.resetElectionTimer()
-					} else {
-						rf.currentTerm += 1
-						rf.persist()
-						rf.resetElectionTimer()
-						rf.electionHandler()
-					}
-					rf.mu.Unlock()
-				}
-			case LEADER:
-				select {
-				case <-rf.shutdownCh:
-					DPrintf("%s [EventLoop]: exit eventLoop", rf.toString())
-					return
-				case <-rf.stateChangeCh:
-					DPrintf("%s [EventLoop]: state change", rf.toString())
-				case <-rf.heartbeatTimer.C:
-					// send heartbeat periodically
-					DPrintf("%s [EventLoop]: Broadcast heartbeat", rf.toString())
-
-					rf.mu.Lock()
-					if rf.serverState != LEADER {
-						rf.resetHeartbeatTimer()
-					} else {
-						rf.resetHeartbeatTimer()
-						rf.broadcastEntryHandler()
-					}
-					rf.mu.Unlock()
-				}
+				rf.mu.Unlock()
 			}
+		case CANDIDATE:
+			select {
+			case <-rf.shutdownCh:
+				DPrintf("%s [EventLoop]: quit eventLoop", rf.toString())
+				return
+			case <-rf.stateChangeCh:
+				DPrintf("%s [EventLoop]: state change", rf.toString())
+			case <-rf.electionTimer.C: // election timeout
+				// resetElectionTimer & restart election
+				DPrintf("%s [EventLoop]: Restart voting because of election timeout", rf.toString())
+
+				rf.mu.Lock()
+				if rf.serverState != CANDIDATE {
+					rf.resetElectionTimer()
+				} else {
+					rf.currentTerm += 1
+					rf.persist()
+					rf.resetElectionTimer()
+					rf.electionHandler()
+				}
+				rf.mu.Unlock()
+			}
+		case LEADER:
+			select {
+			case <-rf.shutdownCh:
+				DPrintf("%s [EventLoop]: quit eventLoop", rf.toString())
+				return
+			case <-rf.stateChangeCh:
+				DPrintf("%s [EventLoop]: state change", rf.toString())
+			case <-rf.heartbeatTimer.C:
+				// send heartbeat periodically
+				DPrintf("%s [EventLoop]: Broadcast heartbeat", rf.toString())
+
+				rf.mu.Lock()
+				if rf.serverState != LEADER {
+					rf.resetHeartbeatTimer()
+				} else {
+					rf.resetHeartbeatTimer()
+					rf.broadcastEntryHandler()
+				}
+				rf.mu.Unlock()
+			}
+		}
 	}
 }
 
