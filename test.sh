@@ -1,4 +1,4 @@
-T=10
+T=20
 N=0
 
 export GOPATH=$PWD
@@ -20,6 +20,14 @@ go test -run Backup && \
 go test -run Persist1 && \
 go test -run Persist2 && \
 go test -run Persist3 && \
+
+# More tests
+go test -run Count && \
+go test -run Figure8 && \
+go test -run UnreliableAgree && \
+go test -run Figure8Unreliable && \
+go test -run ReliableChurn && \
+go test -run UnreliableChurn && \
 
 #echo "Passed "${i}
 N=$[N+1]
