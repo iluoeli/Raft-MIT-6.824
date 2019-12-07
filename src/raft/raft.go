@@ -383,6 +383,7 @@ func (rf *Raft) AppendEntries(args AppendEntryArgs, reply *AppendEntryReply) {
 
 		// Check commit index
 		lastLogIndex = len(rf.log) - 1
+		prevCommitIndex := rf.commitIndex
 		if args.LeaderCommit > rf.commitIndex {
 			if args.LeaderCommit > lastLogIndex {
 				rf.commitIndex = lastLogIndex
@@ -393,8 +394,7 @@ func (rf *Raft) AppendEntries(args AppendEntryArgs, reply *AppendEntryReply) {
 
 		DPrintf("%s [AE]: Apply log entries, current length %d", rf.toString(), len(rf.log))
 
-		// TODO
-		if rf.commitIndex > rf.lastApplied {
+		if rf.commitIndex > prevCommitIndex {
 			rf.commitCh <- struct {}{}
 		}
 	} else if args.PrevLogIndex <= lastLogIndex && args.PrevLogTerm != rf.log[args.PrevLogIndex].Term {
@@ -767,8 +767,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// chanel & timer
 	rf.applyCh = applyCh
-	rf.commitCh = make(chan struct{}, 10)	// in case of dead-lock
-	rf.stateChangeCh = make(chan struct{})
+	rf.commitCh = make(chan struct{}, 100)	// in case of dead-lock
+	rf.stateChangeCh = make(chan struct{}, 100)
 	rf.shutdownCh = make(chan struct{})
 	rf.shutdownCmtCh = make(chan struct{})
 
