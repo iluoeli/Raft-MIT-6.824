@@ -358,6 +358,8 @@ func (rf *Raft) AppendEntries(args AppendEntryArgs, reply *AppendEntryReply) {
 
 	reply.Term = args.Term
 	rf.switchTo(FOLLOWER)
+	// NOTE: Maintaining votedFor
+	rf.votedFor = args.LeaderId
 	rf.persist()
 	rf.stateChangeCh <- struct{}{}
 
